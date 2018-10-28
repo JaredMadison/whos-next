@@ -1,28 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
-	"time"
-
-	"fmt"
-
 	"strconv"
+	"time"
 
 	"github.com/davecgh/go-spew/spew"
 	alexa "github.com/mikeflynn/go-alexa/skillserver"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 )
-
-/* code to show the contents of all collections
-var collections = db.getCollectionNames();
-for(var i = 0; i< collections.length; i++) {
-   print('Collection: ' + collections[i]);
-   db.getCollection(collections[i]).find().forEach(printjson);
-}
-*/
 
 var Applications = map[string]interface{}{
 	"/echo/whoseturn": alexa.EchoApplication{ // Route
@@ -38,6 +28,7 @@ func main() {
 	alexa.Run(Applications, "7152")
 }
 
+//main handler for requests
 func EchoWhoseTurn(w http.ResponseWriter, r *http.Request) {
 	//echoReq := context.Get(r, "echoRequest").(*alexa.EchoRequest)
 	echoReq := alexa.GetEchoRequest(r)
@@ -57,12 +48,9 @@ func EchoWhoseTurn(w http.ResponseWriter, r *http.Request) {
 	id := echoReq.GetUserID()
 	user := loadUser(col, id)
 
-	log.Println("Received request")
+	//prints request type for debugging
 	log.Println(echoReq.GetRequestType())
 	if echoReq.GetRequestType() == "LaunchRequest" {
-		log.Println("In launch request")
-		fmt.Println("Hello")
-
 		msg := "Welcome to Who's Next. What can I do for you?"
 		echoResp := alexa.NewEchoResponse().OutputSpeech(msg).EndSession(false)
 
@@ -72,17 +60,19 @@ func EchoWhoseTurn(w http.ResponseWriter, r *http.Request) {
 
 	} else if echoReq.GetRequestType() == "SessionEndedRequest" {
 		msg := "Goodbye"
+		//end the session in the case of a SessionWndedRequest
 		echoResp := alexa.NewEchoResponse().OutputSpeech(msg).EndSession(true)
 		json, _ := echoResp.String()
 		w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 		w.Write(json)
 
 	} else if echoReq.GetRequestType() == "IntentRequest" {
+		//print intent name for debugging
 		log.Println(echoReq.GetIntentName())
 		//create an echoResp that will be populated by intent function
 		var echoResp *alexa.EchoResponse
 
-		//call intent functino depending on given intent name
+		//call intent function depending on given intent name
 		switch echoReq.GetIntentName() {
 		case "AMAZON.HelpIntent":
 			echoResp = help(echoReq)
@@ -131,12 +121,16 @@ func loadUser(col *mgo.Collection, userID string) *User {
 	return &user
 }
 
+//handles basic amazon built in cancel intent
+//ends the session
 func cancel(echoReq *alexa.EchoRequest) *alexa.EchoResponse {
 	msg := "Goodbye"
 	echoResp := alexa.NewEchoResponse().OutputSpeech(msg).EndSession(true)
 	return echoResp
 }
 
+//handles basic amazon built in help intent
+//responds with a helpful message
 func help(echoReq *alexa.EchoRequest) *alexa.EchoResponse {
 	msg := "Try adding an activity by saying add, then the name of the activity"
 	echoResp := alexa.NewEchoResponse().OutputSpeech(msg).EndSession(false)
@@ -227,7 +221,9 @@ func listPeopleOnActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user 
 
 }
 
-//
+//function that handles the completedActivity intent
+//responds with error messages if the activity or person's name is not found in database
+//otherwise, updates database accordingly and responds with a success response
 func completedActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *alexa.EchoResponse {
 	msg := ""
 
@@ -253,8 +249,10 @@ func completedActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *Us
 	activityIndex := getActivityIndex(user.Activities, activityName)
 
 	currentPersonIndex := user.Activities[activityIndex].WhoseCurrent
+	//the person's name whose turn it is
 	personTurn := user.Activities[activityIndex].People[currentPersonIndex]
 
+	//check to see if it is the person's turn
 	if personTurn == personName {
 		if user.Activities[activityIndex].WhoseCurrent == len(user.Activities[activityIndex].People)-1 {
 			user.Activities[activityIndex].WhoseCurrent = 0
@@ -267,11 +265,14 @@ func completedActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *Us
 
 	msg = personName + " has completed the activity, it is now " + user.Activities[activityIndex].People[user.Activities[activityIndex].WhoseCurrent] + "'s turn to " + activityName
 
+	//update database
 	updateUser(col, user)
 	echoResp := alexa.NewEchoResponse().OutputSpeech(msg).EndSession(false)
 	return echoResp
 }
 
+//handles the intent that tells the user whose turn it is for an activity
+//responds with error messages if the activity is not found or the person is not assigned to it
 func whoseTurnForActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *alexa.EchoResponse {
 	msg := ""
 
@@ -301,6 +302,8 @@ func whoseTurnForActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user 
 	return echoResp
 }
 
+//handles the intent to add someone to an activity
+//responds with and error if there is no activity by that name or if they are already added
 func addPersonToActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *alexa.EchoResponse {
 	msg := ""
 
@@ -314,6 +317,7 @@ func addPersonToActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *
 		return echoResp
 	}
 
+	//activityIndex is used to tell if there is an activity by that name
 	activityIndex := -1
 	for index, activity := range user.Activities {
 		if activity.Name == actvityName {
@@ -328,6 +332,7 @@ func addPersonToActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *
 		return echoResp
 	}
 
+	//search activities to see if they are already added
 	for _, name := range user.Activities[activityIndex].People {
 		if personName == name {
 			msg = personName + " is already added to " + actvityName
@@ -344,6 +349,8 @@ func addPersonToActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *
 	return echoResp
 }
 
+//handles addActivity intent
+//responds with error messages if the activity is already added or another error
 func addActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *alexa.EchoResponse {
 	msg := ""
 
@@ -368,12 +375,14 @@ func addActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *a
 		}
 	}
 
+	//create an activity variable to add to the list in the database
 	var activity = Activity{
 		Name:         activityName,
 		WhoseCurrent: 0,
 	}
 	spew.Dump(activity)
 
+	//adds to db
 	user.Activities = append(user.Activities, activity)
 	col.Upsert(bson.M{"id": user.ID}, user)
 
@@ -384,6 +393,8 @@ func addActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *a
 	return echoResp
 }
 
+//handles removal of activity
+//responds with error message if there is no activity by that name or another error
 func removeActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *alexa.EchoResponse {
 	msg := ""
 
@@ -413,6 +424,7 @@ func removeActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User)
 	return echoResp
 }
 
+//gets index of a given activity array and name
 func getActivityIndex(activities []Activity, activityName string) int {
 	activityIndex := -1
 	for index, activity := range activities {
@@ -421,12 +433,12 @@ func getActivityIndex(activities []Activity, activityName string) int {
 			break
 		}
 	}
-
 	return activityIndex
 }
 
+//handles remove person from activity intent
+//responds with error if there is no activity or person by that name
 func removePersonFromActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, user *User) *alexa.EchoResponse {
-	fmt.Println("Made it to removePersonFromActivity")
 	msg := ""
 
 	activityName, err := echoReq.GetSlotValue("activity")
@@ -477,6 +489,7 @@ func removePersonFromActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, u
 		msg = "There is no person by that name"
 	}
 
+	//update db
 	updateUser(col, user)
 
 	msg = "Removed " + personName + " from " + activityName
@@ -484,11 +497,13 @@ func removePersonFromActivity(echoReq *alexa.EchoRequest, col *mgo.Collection, u
 	return echoResp
 }
 
+//User struct with id and activities they are involved in
 type User struct {
 	ID         string     `json:"id"`
 	Activities []Activity `json:"activities"`
 }
 
+//Activity struct that holds name, whose turn it currently is, and an array of people's names
 type Activity struct {
 	Name         string   `json:"name"`
 	WhoseCurrent int      `json:"whoseCurrent"`
